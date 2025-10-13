@@ -1,8 +1,10 @@
 # Exercise Enricher Dependencies
 # Install with: pip install -r requirements.txt
 
-# Anthropic Claude API client
-anthropic>=0.39.0
+# AI Provider Libraries
+anthropic>=0.39.0      # Claude (Anthropic) API client [PAID]
+openai>=1.0.0          # OpenAI (GPT) API client [PAID]
+groq>=0.4.0            # Groq API client [FREE] ⭐
 
-# Environment variable management (optional, for .env file support)
+# Environment variable management (for .env file support)
 python-dotenv>=1.0.0
