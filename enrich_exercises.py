@@ -230,7 +230,7 @@ class ExerciseEnricher:
                 clean_desc = re.sub(r"<[^>]+>", "", desc)
                 existing_info.append(f"- Description (lang {lang}): {clean_desc}")
 
-        prompt = f"""You are a fitness expert. I need you to enrich the following exercise information.
+        prompt = f"""You are a fitness expert. I need you to enrich the following exercise information according to the Prisma database schema structure.
 
 Exercise ID: {exercise_id}
 Category: {category}
@@ -239,24 +239,48 @@ Equipment: {', '.join(equipment) if equipment else 'None specified'}
 Existing information:
 {chr(10).join(existing_info) if existing_info else 'No existing translations'}
 
-Please provide the following information in a structured JSON format:
+DATABASE SCHEMA REQUIREMENTS:
+- Language IDs: English = 2, Spanish = 4 (integer values, NOT strings)
+- Translations must include: name, description, language (int), aliases (array), notes (array)
+- Primary muscle should match ExerciseMuscle names in the database
+- Aliases are alternative names for regional variations (e.g., for push-ups in Spanish: "Lagartija", "Flexión", "Plancha")
+- Notes are additional tips, warnings, or execution instructions (e.g., "Keep core engaged", "Avoid arching your back")
 
-1. **Primary Muscle**: The main muscle group targeted by this exercise (e.g., "Chest", "Biceps", "Quadriceps", "Core", "Shoulders")
-2. **Title (English)**: A clear, concise name for the exercise
-3. **Title (Spanish)**: The same title translated to Spanish
-4. **Description (English)**: A detailed description of how to perform the exercise (2-4 sentences, including proper form and key points)
-5. **Description (Spanish)**: The same description translated to Spanish
+Please provide the following information in a structured JSON format that matches the Prisma schema:
 
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY a valid JSON object with this EXACT structure:
 {{
-  "primary_muscle": "muscle name here",
-  "title_en": "exercise title in English",
-  "title_es": "exercise title in Spanish",
-  "description_en": "detailed description in English",
-  "description_es": "detailed description in Spanish"
+  "primary_muscle": {{
+    "name": "muscle name in Spanish",
+    "name_en": "muscle name in English"
+  }},
+  "translations": [
+    {{
+      "name": "exercise title in English",
+      "description": "detailed description in English (2-4 sentences, including proper form and key points)",
+      "language": 2,
+      "aliases": ["Alternative Name 1", "Alternative Name 2"],
+      "notes": ["Tip 1: specific execution advice", "Tip 2: safety warning or form cue"]
+    }},
+    {{
+      "name": "exercise title in Spanish",
+      "description": "detailed description in Spanish (2-4 sentences, including proper form and key points)",
+      "language": 4,
+      "aliases": ["Nombre Alternativo 1", "Nombre Alternativo 2"],
+      "notes": ["Consejo 1: consejo específico de ejecución", "Consejo 2: advertencia de seguridad o indicación de forma"]
+    }}
+  ]
 }}
 
-Do not include any markdown formatting, code blocks, or additional text. Return only the raw JSON object."""
+IMPORTANT NOTES:
+- language MUST be an integer (2 for English, 4 for Spanish), not a string
+- Each translation should have at least 2-3 aliases (common regional variations or alternative names)
+- Each translation should have at least 2-3 notes (execution tips, safety warnings, form cues)
+- Aliases should be culturally relevant (e.g., different Spanish-speaking countries may use different names)
+- Notes should be practical and actionable (focus on form, breathing, common mistakes, safety)
+- The primary_muscle object must have both "name" (Spanish) and "name_en" (English) properties
+- Do not include any markdown formatting, code blocks, or additional text
+- Return only the raw JSON object"""
 
         return prompt
 
@@ -278,17 +302,51 @@ Do not include any markdown formatting, code blocks, or additional text. Return 
             # Try to parse the response as JSON
             data = json.loads(text)
 
-            # Validate that all required fields are present
-            required_fields = [
-                "primary_muscle",
-                "title_en",
-                "title_es",
-                "description_en",
-                "description_es",
-            ]
-            for field in required_fields:
-                if field not in data or not data[field]:
-                    print(f"Error: Missing or empty field '{field}' in response")
+            # Validate primary_muscle structure
+            if "primary_muscle" not in data or not isinstance(data["primary_muscle"], dict):
+                print("Error: Missing or invalid 'primary_muscle' object in response")
+                return None
+
+            muscle = data["primary_muscle"]
+            if "name" not in muscle or "name_en" not in muscle:
+                print("Error: 'primary_muscle' must have both 'name' and 'name_en' properties")
+                return None
+
+            # Validate translations structure
+            if "translations" not in data or not isinstance(data["translations"], list):
+                print("Error: Missing or invalid 'translations' array in response")
+                return None
+
+            if len(data["translations"]) != 2:
+                print("Error: 'translations' array must contain exactly 2 translations (English and Spanish)")
+                return None
+
+            # Validate each translation
+            for idx, translation in enumerate(data["translations"]):
+                if not isinstance(translation, dict):
+                    print(f"Error: Translation {idx} is not a valid object")
+                    return None
+
+                # Check required fields
+                required_fields = ["name", "description", "language", "aliases", "notes"]
+                for field in required_fields:
+                    if field not in translation:
+                        print(f"Error: Translation {idx} missing required field '{field}'")
+                        return None
+
+                # Validate language is integer (2 or 4)
+                if not isinstance(translation["language"], int) or translation["language"] not in [2, 4]:
+                    print(f"Error: Translation {idx} has invalid language (must be integer 2 or 4)")
+                    return None
+
+                # Validate aliases is array
+                if not isinstance(translation["aliases"], list):
+                    print(f"Error: Translation {idx} 'aliases' must be an array")
+                    return None
+
+                # Validate notes is array
+                if not isinstance(translation["notes"], list):
+                    print(f"Error: Translation {idx} 'notes' must be an array")
                     return None
 
             return data
