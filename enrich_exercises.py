@@ -9,7 +9,7 @@ the processed exercises to separate output files.
 It maintains a progress file to track which exercises have been processed,
 allowing the script to resume from where it left off.
 
-Supports multiple AI providers: Claude (Anthropic) and OpenAI (GPT-4)
+Supports local LLM models from Hugging Face (optimized for CPU)
 """
 
 import json
@@ -18,7 +18,10 @@ import sys
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import time
-import getpass
+import warnings
+
+# Suppress warnings for cleaner output
+warnings.filterwarnings("ignore")
 
 # Try importing python-dotenv for .env file support
 try:
@@ -32,123 +35,159 @@ INPUT_FILE = os.path.join(BASE_DIR, "input", "exercicies_mock.json")
 OUTPUT_FILE = os.path.join(BASE_DIR, "output", "enriched_exercises.json")
 PROGRESS_FILE = os.path.join(BASE_DIR, "output", "processing_progress.json")
 
-# AI Provider constants
-PROVIDER_CLAUDE = "claude"
-PROVIDER_OPENAI = "openai"
-PROVIDER_GROQ = "groq"
+# Local model constants
+MODELS_DIR = os.path.join(BASE_DIR, "models")  # Directory to cache models
 
-# Environment variable names
-ENV_ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
-ENV_OPENAI_KEY = "OPEN_AI_API_KEY"
-ENV_GROQ_KEY = "GROQ_API_KEY"
+# Available models optimized for CPU with low RAM
+AVAILABLE_MODELS = {
+    "qwen-1.5b": {
+        "name": "Qwen/Qwen2-1.5B-Instruct",
+        "description": "Qwen 1.5B - Rápido y ligero (1.5B parámetros) [RECOMENDADO]",
+        "ram_requirement": "~3GB RAM",
+        "speed": "Rápido en CPU",
+    },
+    "tinyllama-1.1b": {
+        "name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "description": "TinyLlama 1.1B - El más rápido (1.1B parámetros)",
+        "ram_requirement": "~2.5GB RAM",
+        "speed": "Muy rápido en CPU",
+    },
+    "phi3-mini": {
+        "name": "microsoft/Phi-3-mini-4k-instruct",
+        "description": "Phi-3 Mini - Mejor calidad pero más lento (3.8B parámetros)",
+        "ram_requirement": "~5-6GB RAM",
+        "speed": "Lento en CPU",
+    },
+}
 
 
-class AIProvider:
-    """Base class for AI providers."""
+class LocalLLMProvider:
+    """Local LLM provider using Hugging Face transformers (optimized for CPU)."""
 
-    def __init__(self, api_key: str):
-        self.api_key = api_key
+    def __init__(self, model_id: str, model_name: str):
+        """Initialize the local LLM provider."""
+        self.model_id = model_id
+        self.model_name = model_name
+        self.pipeline = None
 
-    def generate_response(self, prompt: str) -> Optional[str]:
-        """Generate a response from the AI provider."""
-        raise NotImplementedError
+        print(f"\n{'='*60}")
+        print(f"Inicializando modelo local: {model_name}")
+        print(f"{'='*60}\n")
 
-
-class ClaudeProvider(AIProvider):
-    """Claude (Anthropic) AI provider."""
-
-    def __init__(self, api_key: str):
-        super().__init__(api_key)
         try:
-            from anthropic import Anthropic
+            from transformers import pipeline, AutoTokenizer
+            import torch
 
-            self.client = Anthropic(api_key=api_key)
-            self.model = "claude-3-5-sonnet-20241022"
-        except ImportError:
-            print(
-                "Error: anthropic library not found. Install it with: pip install anthropic"
+            # Check if running on CPU
+            device = "cpu"
+            print(f"Dispositivo: {device.upper()}")
+            print("Descargando/cargando modelo (esto puede tardar la primera vez)...\n")
+
+            # Create cache directory if it doesn't exist
+            os.makedirs(MODELS_DIR, exist_ok=True)
+
+            # Load tokenizer first to check if model exists
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_id,
+                cache_dir=MODELS_DIR,
+                trust_remote_code=True
             )
+            
+            # Set pad token if not exists
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+
+            # Create text generation pipeline with CPU optimizations
+            self.pipeline = pipeline(
+                "text-generation",
+                model=model_id,
+                tokenizer=tokenizer,
+                device=device,
+                torch_dtype=torch.float32,  # Use float32 for CPU
+                trust_remote_code=True,
+                model_kwargs={
+                    "low_cpu_mem_usage": True,  # Optimize memory usage
+                    "cache_dir": MODELS_DIR,  # Move cache_dir to model_kwargs
+                    "max_position_embeddings": 4096,  # Increase max sequence length
+                }
+            )
+
+            print(f"✓ Modelo cargado exitosamente!\n")
+
+        except ImportError as e:
+            print(f"Error: Falta instalar dependencias requeridas")
+            print(f"Ejecuta: pip install -r requirements.txt")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error al cargar el modelo: {e}")
+            print(f"\nIntenta con un modelo más pequeño o verifica tu conexión a internet.")
             sys.exit(1)
 
     def generate_response(self, prompt: str) -> Optional[str]:
-        """Generate a response using Claude."""
+        """Generate a response using the local LLM."""
         try:
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
+            # Different chat templates for different models
+            if "Qwen" in self.model_id:
+                messages = [{"role": "user", "content": prompt}]
+                formatted_prompt = self.pipeline.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+            elif "Phi-3" in self.model_id:
+                formatted_prompt = f"<|user|>\n{prompt}<|end|>\n<|assistant|>\n"
+            elif "TinyLlama" in self.model_id:
+                formatted_prompt = f"<|user|>\n{prompt}</s>\n<|assistant|>\n"
+            else:
+                formatted_prompt = prompt
+
+            # Check if prompt is too long and truncate if necessary
+            max_prompt_length = 1800  # Leave room for generated tokens
+            tokens = self.pipeline.tokenizer.encode(formatted_prompt)
+            if len(tokens) > max_prompt_length:
+                # Truncate prompt to fit within limits
+                truncated_tokens = tokens[:max_prompt_length]
+                formatted_prompt = self.pipeline.tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+                print(f"⚠️  Prompt truncated to fit model limits ({len(tokens)} -> {len(truncated_tokens)} tokens)")
+
+            # Generate response with reduced token count
+            outputs = self.pipeline(
+                formatted_prompt,
+                max_new_tokens=800,  # Reduced from 1200 to leave more room for prompt
+                do_sample=True,
+                temperature=0.5,  # Lower temperature for more focused responses
+                top_p=0.9,
+                pad_token_id=self.pipeline.tokenizer.eos_token_id,
+                eos_token_id=self.pipeline.tokenizer.eos_token_id,
+                truncation=True,  # Enable truncation
             )
-            return message.content[0].text
+
+            # Extract generated text
+            generated_text = outputs[0]["generated_text"]
+
+            # Remove the prompt from the response
+            if generated_text.startswith(formatted_prompt):
+                response = generated_text[len(formatted_prompt):].strip()
+            else:
+                response = generated_text.strip()
+
+            # For Phi-3, remove the end token if present
+            if "<|end|>" in response:
+                response = response.split("<|end|>")[0].strip()
+
+            return response
+
         except Exception as e:
-            raise Exception(f"Claude API error: {e}")
-
-
-class OpenAIProvider(AIProvider):
-    """OpenAI (GPT) AI provider."""
-
-    def __init__(self, api_key: str):
-        super().__init__(api_key)
-        try:
-            from openai import OpenAI
-
-            self.client = OpenAI(api_key=api_key)
-            self.model = "gpt-4o"  # Using GPT-4o (most capable and cost-effective)
-        except ImportError:
-            print(
-                "Error: openai library not found. Install it with: pip install openai"
-            )
-            sys.exit(1)
-
-    def generate_response(self, prompt: str) -> Optional[str]:
-        """Generate a response using OpenAI."""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise Exception(f"OpenAI API error: {e}")
-
-
-class GroqProvider(AIProvider):
-    """Groq AI provider (FREE)."""
-
-    def __init__(self, api_key: str):
-        super().__init__(api_key)
-        try:
-            from groq import Groq
-
-            self.client = Groq(api_key=api_key)
-            # Using Llama 3.3 70B - Latest model available on Groq
-            self.model = "llama-3.3-70b-versatile"
-        except ImportError:
-            print("Error: groq library not found. Install it with: pip install groq")
-            sys.exit(1)
-
-    def generate_response(self, prompt: str) -> Optional[str]:
-        """Generate a response using Groq."""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise Exception(f"Groq API error: {e}")
+            raise Exception(f"Error generando respuesta del modelo local: {e}")
 
 
 class ExerciseEnricher:
     """Class to handle the enrichment of exercises using AI."""
 
-    def __init__(self, provider: AIProvider, provider_name: str):
-        """Initialize the enricher with AI provider."""
+    def __init__(self, provider: LocalLLMProvider, model_name: str):
+        """Initialize the enricher with local LLM provider."""
         self.provider = provider
-        self.provider_name = provider_name
+        self.model_name = model_name
         self.processed_ids = self._load_progress()
         self.enriched_exercises = self._load_existing_output()
 
@@ -172,7 +211,7 @@ class ExerciseEnricher:
             "processed_exercise_ids": self.processed_ids,
             "last_updated": datetime.now().isoformat(),
             "total_processed": len(self.processed_ids),
-            "ai_provider": self.provider_name,
+            "model": self.model_name,
         }
 
         try:
@@ -215,70 +254,34 @@ class ExerciseEnricher:
         equipment = [eq.get("name", "") for eq in exercise.get("equipment", [])]
         translations = exercise.get("translations", [])
 
-        # Get existing names and descriptions
+        # Get existing names (limit to avoid long prompts)
         existing_info = []
-        for trans in translations:
+        for trans in translations[:2]:  # Limit to first 2 translations
             name = trans.get("name", "")
-            desc = trans.get("description", "")
             lang = trans.get("language", "")
             if name:
                 existing_info.append(f"- Name (lang {lang}): {name}")
-            if desc:
-                # Remove HTML tags from description
-                import re
+            # Skip descriptions to save space
 
-                clean_desc = re.sub(r"<[^>]+>", "", desc)
-                existing_info.append(f"- Description (lang {lang}): {clean_desc}")
+        # Create a shorter, more concise prompt to avoid token limits
+        prompt = f"""Fitness expert: Enrich this exercise info as JSON.
 
-        prompt = f"""You are a fitness expert. I need you to enrich the following exercise information according to the Prisma database schema structure.
-
-Exercise ID: {exercise_id}
+Exercise: {exercise_id}
 Category: {category}
-Equipment: {', '.join(equipment) if equipment else 'None specified'}
+Equipment: {', '.join(equipment) if equipment else 'None'}
 
-Existing information:
-{chr(10).join(existing_info) if existing_info else 'No existing translations'}
+{chr(10).join(existing_info[:2]) if existing_info else 'No existing info'}
 
-DATABASE SCHEMA REQUIREMENTS:
-- Language IDs: English = 2, Spanish = 4 (integer values, NOT strings)
-- Translations must include: name, description, language (int), aliases (array), notes (array)
-- Primary muscle should match ExerciseMuscle names in the database
-- Aliases are alternative names for regional variations (e.g., for push-ups in Spanish: "Lagartija", "Flexión", "Plancha")
-- Notes are additional tips, warnings, or execution instructions (e.g., "Keep core engaged", "Avoid arching your back")
-
-Please provide the following information in a structured JSON format that matches the Prisma schema:
-
-Return ONLY a valid JSON object with this EXACT structure:
+Return JSON with this structure:
 {{
-  "primary_muscle": {{
-    "name": "muscle name in Spanish",
-    "name_en": "muscle name in English"
-  }},
+  "primary_muscle": {{"name": "Spanish", "name_en": "English"}},
   "translations": [
-    {{
-      "name": "exercise title in English",
-      "description": "detailed description in English (2-4 sentences, including proper form and key points)",
-      "language": 2,
-      "aliases": ["Alternative Name 1", "Alternative Name 2"],
-      "notes": ["Tip 1: specific execution advice", "Tip 2: safety warning or form cue"]
-    }},
-    {{
-      "name": "exercise title in Spanish",
-      "description": "detailed description in Spanish (2-4 sentences, including proper form and key points)",
-      "language": 4,
-      "aliases": ["Nombre Alternativo 1", "Nombre Alternativo 2"],
-      "notes": ["Consejo 1: consejo específico de ejecución", "Consejo 2: advertencia de seguridad o indicación de forma"]
-    }}
+    {{"name": "Title", "description": "2-3 sentences", "language": 2, "aliases": ["Alt1", "Alt2"], "notes": ["Tip1", "Tip2"]}},
+    {{"name": "Título", "description": "2-3 oraciones", "language": 4, "aliases": ["Alt1", "Alt2"], "notes": ["Consejo1", "Consejo2"]}}
   ]
 }}
 
-IMPORTANT NOTES:
-- language MUST be an integer (2 for English, 4 for Spanish), not a string
-- Each translation should have at least 2-3 aliases (common regional variations or alternative names)
-- Each translation should have at least 2-3 notes (execution tips, safety warnings, form cues)
-- Aliases should be culturally relevant (e.g., different Spanish-speaking countries may use different names)
-- Notes should be practical and actionable (focus on form, breathing, common mistakes, safety)
-- The primary_muscle object must have both "name" (Spanish) and "name_en" (English) properties
+Rules: language=int (2=English, 4=Spanish), include 2+ aliases and notes.
 - Do not include any markdown formatting, code blocks, or additional text
 - Return only the raw JSON object"""
 
@@ -393,7 +396,7 @@ IMPORTANT NOTES:
                 "original_translations": exercise.get("translations", []),
                 "enriched_data": enriched_data,
                 "processed_at": datetime.now().isoformat(),
-                "ai_provider": self.provider_name,
+                "model": self.model_name,
             }
 
             # Save progress
@@ -418,7 +421,7 @@ IMPORTANT NOTES:
         print(f"\n{'='*60}")
         print(f"Exercise Enrichment Progress")
         print(f"{'='*60}")
-        print(f"AI Provider: {self.provider_name.upper()}")
+        print(f"Modelo: {self.model_name}")
         print(f"Total exercises: {total}")
         print(f"Already processed: {processed}")
         print(f"Remaining: {remaining}")
@@ -466,135 +469,74 @@ def load_exercises(file_path: str) -> List[Dict[str, Any]]:
         sys.exit(1)
 
 
-def select_ai_provider() -> str:
-    """Prompt user to select AI provider."""
+def select_model() -> tuple[str, str]:
+    """Prompt user to select a local model."""
     print("\n" + "=" * 60)
-    print("Select AI Provider")
+    print("Selecciona un Modelo Local de LLM")
     print("=" * 60)
-    print("\nAvailable AI providers:")
-    print("  1. Claude (Anthropic) - Claude 3.5 Sonnet [PAID]")
-    print("  2. OpenAI - GPT-4o [PAID]")
-    print("  3. Groq - Llama 3.1 70B [FREE] ⭐")
+    print("\nModelos disponibles optimizados para CPU con poca RAM:")
     print()
+
+    model_keys = list(AVAILABLE_MODELS.keys())
+    for idx, key in enumerate(model_keys, 1):
+        model_info = AVAILABLE_MODELS[key]
+        print(f"  {idx}. {model_info['description']}")
+        print(f"     RAM requerida: {model_info['ram_requirement']}")
+        print(f"     Velocidad: {model_info['speed']}")
+        print()
 
     while True:
-        choice = input("Enter your choice (1, 2, or 3): ").strip()
-        if choice == "1":
-            return PROVIDER_CLAUDE
-        elif choice == "2":
-            return PROVIDER_OPENAI
-        elif choice == "3":
-            return PROVIDER_GROQ
-        else:
-            print("Invalid choice. Please enter 1, 2, or 3.")
+        choice = input(f"Ingresa tu elección (1-{len(model_keys)}): ").strip()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(model_keys):
+                selected_key = model_keys[idx]
+                model_id = AVAILABLE_MODELS[selected_key]["name"]
+                model_name = selected_key
+                return model_id, model_name
+            else:
+                print(f"Opción inválida. Por favor ingresa un número entre 1 y {len(model_keys)}.")
+        except ValueError:
+            print(f"Opción inválida. Por favor ingresa un número entre 1 y {len(model_keys)}.")
 
 
-def get_api_key_from_env(provider: str) -> Optional[str]:
-    """Try to get API key from environment variables."""
-    if provider == PROVIDER_CLAUDE:
-        return os.environ.get(ENV_ANTHROPIC_KEY)
-    elif provider == PROVIDER_OPENAI:
-        return os.environ.get(ENV_OPENAI_KEY)
-    elif provider == PROVIDER_GROQ:
-        return os.environ.get(ENV_GROQ_KEY)
-    return None
-
-
-def prompt_for_api_key(provider: str) -> str:
-    """Prompt user for API key."""
-    if provider == PROVIDER_CLAUDE:
-        provider_name = "Claude (Anthropic)"
-        url = "https://console.anthropic.com/settings/keys"
-    elif provider == PROVIDER_OPENAI:
-        provider_name = "OpenAI"
-        url = "https://platform.openai.com/api-keys"
-    elif provider == PROVIDER_GROQ:
-        provider_name = "Groq (FREE)"
-        url = "https://console.groq.com/keys"
-    else:
-        provider_name = "Unknown"
-        url = ""
-
-    print(f"\n{'='*60}")
-    print(f"API Key Configuration")
-    print(f"{'='*60}")
-    print(f"Provider: {provider_name}\n")
-    print("API key not found in .env file.\n")
-
-    if url:
-        print(f"Get your API key from: {url}")
-
-    print()
-
-    # Use getpass for secure input (won't show the key as user types)
-    api_key = getpass.getpass("Enter your API key: ").strip()
-
-    if not api_key:
-        print("Error: API key cannot be empty")
-        sys.exit(1)
-
-    return api_key
-
-
-def create_provider(provider_type: str, api_key: str) -> AIProvider:
-    """Create an AI provider instance."""
-    if provider_type == PROVIDER_CLAUDE:
-        return ClaudeProvider(api_key)
-    elif provider_type == PROVIDER_OPENAI:
-        return OpenAIProvider(api_key)
-    elif provider_type == PROVIDER_GROQ:
-        return GroqProvider(api_key)
-    else:
-        raise ValueError(f"Unknown provider: {provider_type}")
+def create_local_provider(model_id: str, model_name: str) -> LocalLLMProvider:
+    """Create a local LLM provider instance."""
+    try:
+        return LocalLLMProvider(model_id, model_name)
+    except Exception as e:
+        raise Exception(f"Error al crear el proveedor de modelo local: {e}")
 
 
 def main():
     """Main function to run the enrichment process."""
     print(f"\n{'='*60}")
-    print(f"Exercise Enrichment Script")
+    print(f"Exercise Enrichment Script - Modelos Locales")
     print(f"{'='*60}\n")
 
-    # Load .env file if python-dotenv is available
-    if load_dotenv is not None:
-        load_dotenv()
+    # Select local model
+    model_id, model_name = select_model()
 
-    # Select AI provider
-    provider_type = select_ai_provider()
-
-    # Try to get API key from environment, otherwise prompt user
-    api_key = get_api_key_from_env(provider_type)
-    if api_key:
-        if provider_type == PROVIDER_CLAUDE:
-            provider_name = "Claude (Anthropic)"
-        elif provider_type == PROVIDER_OPENAI:
-            provider_name = "OpenAI"
-        elif provider_type == PROVIDER_GROQ:
-            provider_name = "Groq (FREE)"
-        else:
-            provider_name = "Unknown"
-        print(f"\n✓ API key loaded from .env file for {provider_name}")
-    else:
-        api_key = prompt_for_api_key(provider_type)
-
-    # Create provider instance
+    # Create local provider instance
     try:
-        provider = create_provider(provider_type, api_key)
+        provider = create_local_provider(model_id, model_name)
     except Exception as e:
-        print(f"Error initializing AI provider: {e}")
+        print(f"Error al inicializar el modelo local: {e}")
         sys.exit(1)
 
     # Load exercises
     exercises = load_exercises(INPUT_FILE)
 
     # Initialize enricher
-    enricher = ExerciseEnricher(provider, provider_type)
+    enricher = ExerciseEnricher(provider, model_name)
 
     # Process all exercises
     try:
-        enricher.process_all_exercises(exercises, delay_seconds=1.0)
+        # Delay can be 0 or very low since we're running locally
+        enricher.process_all_exercises(exercises, delay_seconds=0.5)
     except KeyboardInterrupt:
-        print("\n\nProcess interrupted by user. Progress has been saved.")
-        print(f"Run the script again to resume from where you left off.")
+        print("\n\nProceso interrumpido por el usuario. El progreso ha sido guardado.")
+        print(f"Ejecuta el script nuevamente para continuar desde donde lo dejaste.")
         sys.exit(0)
 
 

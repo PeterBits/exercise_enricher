@@ -40,3 +40,5 @@ output/
 # OS
 .DS_Store
 Thumbs.db
+
+.models

@@ -1,17 +1,18 @@
 # Exercise Enricher
 
-Script interactivo para enriquecer ejercicios de gimnasio utilizando IA. Soporta múltiples proveedores de IA: **Claude (Anthropic)** y **OpenAI (GPT-4o)**.
+Script interactivo para enriquecer ejercicios de gimnasio utilizando **modelos locales de LLM** de Hugging Face. No requiere API keys ni conexión a internet después de la primera descarga del modelo.
 
 ## Características
 
-- ✅ **Soporte multi-proveedor**: Elige entre Claude o OpenAI
-- ✅ Enriquece ejercicios con información estructurada
+- ✅ **Modelos 100% locales**: Sin necesidad de API keys ni costos por uso
+- ✅ **Optimizado para CPU**: Funciona sin GPU NVIDIA
+- ✅ **Eficiente con poca RAM**: Modelos diseñados para sistemas con 8GB o menos
+- ✅ Enriquece ejercicios con información estructurada según el esquema Prisma
 - ✅ Identifica el músculo principal trabajado
-- ✅ Genera títulos y descripciones en inglés y español
+- ✅ Genera títulos, descripciones, aliases y notas en inglés y español
 - ✅ Sistema de progreso incremental (resume desde donde se quedó)
-- ✅ Configuración flexible: lee API keys desde .env o las pide interactivamente
 - ✅ Manejo de errores robusto
-- ✅ Rate limiting automático
+- ✅ Privacidad total: tus datos nunca salen de tu ordenador
 
 ## Estructura del Proyecto
 
@@ -19,11 +20,10 @@ Script interactivo para enriquecer ejercicios de gimnasio utilizando IA. Soporta
 exercise-enricher/
 ├── enrich_exercises.py      # Script principal
 ├── requirements.txt          # Dependencias de Python
-├── .env.example             # Ejemplo de configuración
-├── .env                     # Tu configuración (crear desde .env.example)
 ├── README.md                # Esta documentación
 ├── input/                   # Carpeta para archivo de entrada
 │   └── exercicies_mock.json # Archivo con ejercicios a procesar
+├── models/                  # Carpeta para caché de modelos (se crea automáticamente)
 └── output/                  # Carpeta para archivos generados
     ├── enriched_exercises.json      # Ejercicios enriquecidos
     └── processing_progress.json     # Progreso del procesamiento
@@ -31,8 +31,10 @@ exercise-enricher/
 
 ## Requisitos Previos
 
-- Python 3.7 o superior
-- Una API key de Anthropic (Claude) o OpenAI (GPT)
+- Python 3.8 o superior
+- **~3-6GB de espacio libre** en disco (para descargar el modelo)
+- **8GB de RAM** recomendado (mínimo 6GB disponible)
+- Conexión a internet (solo para la primera descarga del modelo)
 
 ## Instalación
 
@@ -43,32 +45,24 @@ cd exercise-enricher
 pip install -r requirements.txt
 ```
 
-### 2. Configurar API Keys (Opcional pero Recomendado)
+**Nota para Windows**: En algunos casos puede ser necesario instalar PyTorch con soporte CPU explícitamente:
 
-Copia el archivo de ejemplo:
 ```bash
-copy .env.example .env
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 ```
 
-Edita el archivo `.env` y añade tu(s) API key(s):
-
-```env
-# Para usar Claude (Anthropic)
-ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxxxxx
-
-# Para usar OpenAI
-OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-```
-
-> **Nota**: Solo necesitas configurar el API key del proveedor que vayas a usar.
-
-### 3. Verificar el archivo de entrada
+### 2. Verificar el archivo de entrada
 
 El archivo `input/exercicies_mock.json` ya debería estar copiado. Si no está, cópialo desde:
 
 ```bash
 copy ..\gainz_backend\prisma\exercicies_mock.json input\
 ```
+
+### 3. Primera ejecución (descarga del modelo)
+
+La primera vez que ejecutes el script, se descargará automáticamente el modelo seleccionado desde Hugging Face (esto puede tardar 5-15 minutos dependiendo de tu conexión). Los modelos se guardan en la carpeta `models/` y no será necesario descargarlos nuevamente.
 
 ## Uso
 
@@ -81,20 +75,32 @@ python enrich_exercises.py
 
 ### Flujo de Ejecución
 
-1. **Selección de proveedor**: El script te preguntará qué IA quieres usar:
+1. **Selección de modelo**: El script te preguntará qué modelo local quieres usar:
    ```
-   Select AI Provider
    ============================================================
-   Available AI providers:
-     1. Claude (Anthropic) - Claude 3.5 Sonnet
-     2. OpenAI - GPT-4o
+   Selecciona un Modelo Local de LLM
+   ============================================================
 
-   Enter your choice (1 or 2):
+   Modelos disponibles optimizados para CPU con poca RAM:
+
+     1. Qwen 1.5B - Rápido y ligero (1.5B parámetros) [RECOMENDADO]
+        RAM requerida: ~3GB RAM
+        Velocidad: Rápido en CPU
+
+     2. TinyLlama 1.1B - El más rápido (1.1B parámetros)
+        RAM requerida: ~2.5GB RAM
+        Velocidad: Muy rápido en CPU
+
+     3. Phi-3 Mini - Mejor calidad pero más lento (3.8B parámetros)
+        RAM requerida: ~5-6GB RAM
+        Velocidad: Lento en CPU
+
+   Ingresa tu elección (1-3):
    ```
 
-2. **API Key**:
-   - Si configuraste el API key en `.env`, el script lo cargará automáticamente ✓
-   - Si no encuentra el API key, te lo pedirá de forma segura (no se muestra al escribir)
+2. **Carga del modelo**:
+   - La primera vez descargará el modelo desde Hugging Face (5-15 minutos)
+   - Las siguientes veces cargará el modelo desde la caché local (~30-60 segundos)
 
 3. **Procesamiento**:
    - Muestra el progreso de cada ejercicio
@@ -107,26 +113,44 @@ python enrich_exercises.py
 $ python enrich_exercises.py
 
 ============================================================
-Exercise Enrichment Script
+Exercise Enrichment Script - Modelos Locales
 ============================================================
 
 ============================================================
-Select AI Provider
+Selecciona un Modelo Local de LLM
 ============================================================
 
-Available AI providers:
-  1. Claude (Anthropic) - Claude 3.5 Sonnet
-  2. OpenAI - GPT-4o
+Modelos disponibles optimizados para CPU con poca RAM:
 
-Enter your choice (1 or 2): 2
+  1. Qwen 1.5B - Rápido y ligero (1.5B parámetros) [RECOMENDADO]
+     RAM requerida: ~3GB RAM
+     Velocidad: Rápido en CPU
 
-✓ API key loaded from .env file for OpenAI
+  2. TinyLlama 1.1B - El más rápido (1.1B parámetros)
+     RAM requerida: ~2.5GB RAM
+     Velocidad: Muy rápido en CPU
+
+  3. Phi-3 Mini - Mejor calidad pero más lento (3.8B parámetros)
+     RAM requerida: ~5-6GB RAM
+     Velocidad: Lento en CPU
+
+Ingresa tu elección (1-3): 1
+
+============================================================
+Inicializando modelo local: qwen-1.5b
+============================================================
+
+Dispositivo: CPU
+Descargando/cargando modelo (esto puede tardar la primera vez)...
+
+✓ Modelo cargado exitosamente!
+
 Loaded 685 exercises from C:\...\input\exercicies_mock.json
 
 ============================================================
 Exercise Enrichment Progress
 ============================================================
-AI Provider: OPENAI
+Modelo: qwen-1.5b
 Total exercises: 685
 Already processed: 0
 Remaining: 685
@@ -162,14 +186,29 @@ Contiene todos los ejercicios enriquecidos con la siguiente estructura:
   ],
   "original_translations": [...],
   "enriched_data": {
-    "primary_muscle": "Shoulders",
-    "title_en": "Lateral Raise Hold (Axe Hold)",
-    "title_es": "Elevación Lateral Sostenida",
-    "description_en": "Hold dumbbells with arms extended to the sides at shoulder height. Maintain the position for as long as possible while keeping proper form and core engaged.",
-    "description_es": "Sostén mancuernas con los brazos extendidos a los lados a la altura de los hombros. Mantén la posición el mayor tiempo posible manteniendo la forma correcta y el core contraído."
+    "primary_muscle": {
+      "name": "Hombros",
+      "name_en": "Shoulders"
+    },
+    "translations": [
+      {
+        "name": "Lateral Raise Hold (Axe Hold)",
+        "description": "Hold dumbbells with arms extended to the sides at shoulder height. Maintain the position for as long as possible while keeping proper form and core engaged.",
+        "language": 2,
+        "aliases": ["Side Raise Hold", "Dumbbell Lateral Hold"],
+        "notes": ["Keep core engaged", "Avoid arching your back"]
+      },
+      {
+        "name": "Elevación Lateral Sostenida",
+        "description": "Sostén mancuernas con los brazos extendidos a los lados a la altura de los hombros. Mantén la posición el mayor tiempo posible manteniendo la forma correcta y el core contraído.",
+        "language": 4,
+        "aliases": ["Elevación de Hombros Sostenida", "Retención Lateral"],
+        "notes": ["Mantén el core activado", "Evita arquear la espalda"]
+      }
+    ]
   },
-  "processed_at": "2024-01-15T10:30:45.123456",
-  "ai_provider": "openai"
+  "processed_at": "2025-01-15T10:30:45.123456",
+  "model": "qwen-1.5b"
 }
 ```
 
@@ -180,39 +219,44 @@ Rastrea el progreso del procesamiento:
 ```json
 {
   "processed_exercise_ids": [31, 42, 57, ...],
-  "last_updated": "2024-01-15T10:30:45.123456",
+  "last_updated": "2025-01-15T10:30:45.123456",
   "total_processed": 150,
-  "ai_provider": "openai"
+  "model": "qwen-1.5b"
 }
 ```
 
 ## Información Enriquecida
 
-Para cada ejercicio, la IA genera:
+Para cada ejercicio, el modelo local genera (según el esquema Prisma):
 
 | Campo | Descripción |
 |-------|-------------|
-| `primary_muscle` | Músculo principal trabajado (ej: "Chest", "Biceps", "Quadriceps") |
-| `title_en` | Título claro y conciso en inglés |
-| `title_es` | Título traducido al español |
-| `description_en` | Descripción detallada en inglés (2-4 oraciones con técnica correcta) |
-| `description_es` | Descripción detallada en español (2-4 oraciones con técnica correcta) |
+| `primary_muscle` | Objeto con nombre del músculo en español (`name`) e inglés (`name_en`) |
+| `translations` | Array con 2 objetos (inglés y español), cada uno contiene: |
+| - `name` | Título del ejercicio |
+| - `description` | Descripción detallada (2-4 oraciones con técnica correcta) |
+| - `language` | ID del idioma (2=inglés, 4=español) |
+| - `aliases` | Array de nombres alternativos o variaciones regionales |
+| - `notes` | Array de consejos de ejecución, advertencias de seguridad |
 
-## Comparación de Proveedores
+## Comparación de Modelos
 
-| Característica | Claude (Anthropic) | OpenAI (GPT-4o) |
-|----------------|-------------------|-----------------|
-| Modelo | Claude 3.5 Sonnet | GPT-4o |
-| Calidad | Excelente | Excelente |
-| Velocidad | Rápida | Rápida |
-| Coste aprox. | ~$3 por 1M tokens | ~$2.50 por 1M tokens |
-| API Key | [console.anthropic.com](https://console.anthropic.com/settings/keys) | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Modelo | Parámetros | RAM Requerida | Velocidad CPU | Calidad | Tamaño Descarga |
+|--------|-----------|---------------|---------------|---------|-----------------|
+| **Qwen 1.5B** | 1.5B | ~3GB | Rápida | Buena | ~3GB |
+| **TinyLlama 1.1B** | 1.1B | ~2.5GB | Muy rápida | Aceptable | ~2.2GB |
+| **Phi-3 Mini** | 3.8B | ~5-6GB | Lenta | Muy buena | ~7.6GB |
 
-> **Nota**: Los costes son aproximados. Cada ejercicio usa ~500-1000 tokens. Consulta los precios actuales en las páginas oficiales.
+### ¿Qué modelo elegir?
+
+- **Tienes 8GB RAM o menos**: Usa **Qwen 1.5B** (recomendado) o **TinyLlama 1.1B**
+- **Tienes 16GB RAM**: Puedes usar **Phi-3 Mini** para mejor calidad
+- **Quieres velocidad**: Usa **TinyLlama 1.1B**
+- **Quieres balance**: Usa **Qwen 1.5B** (mejor opción general)
 
 ## Reanudar Procesamiento
 
-Si el script se interrumpe (por error, falta de créditos, o Ctrl+C), simplemente vuelve a ejecutarlo:
+Si el script se interrumpe (por error o Ctrl+C), simplemente vuelve a ejecutarlo:
 
 ```bash
 python enrich_exercises.py
@@ -222,6 +266,7 @@ El script:
 - Detectará automáticamente qué ejercicios ya fueron procesados
 - Continuará desde donde se quedó
 - Preservará todos los datos ya guardados
+- Cargará el mismo modelo que usaste anteriormente
 
 ## Reiniciar desde Cero
 
@@ -240,80 +285,83 @@ del output\processing_progress.json
 
 ## Solución de Problemas
 
-### Error: "API key not found in .env file"
-
-**Solución 1**: Crea el archivo `.env` y añade tu API key:
-```bash
-copy .env.example .env
-# Edita .env y añade tu API key
-```
-
-**Solución 2**: El script te pedirá el API key automáticamente si no lo encuentra
-
-### Error: "Your credit balance is too low"
-
-**Solución**: Añade créditos a tu cuenta:
-- **Claude**: https://console.anthropic.com/settings/billing
-- **OpenAI**: https://platform.openai.com/account/billing
-
-### Error: "anthropic library not found" o "openai library not found"
+### Error: "Falta instalar dependencias requeridas"
 
 **Solución**: Instala las dependencias:
 ```bash
 pip install -r requirements.txt
 ```
 
+### Error al cargar el modelo o descarga muy lenta
+
+**Solución 1**: Verifica tu conexión a internet (solo necesaria la primera vez)
+
+**Solución 2**: Si la descarga falla, intenta con un modelo más pequeño (TinyLlama 1.1B)
+
+**Solución 3**: Borra la carpeta `models/` y vuelve a intentar
+
+### El ordenador se queda sin memoria (RAM)
+
+**Solución**: Usa un modelo más pequeño:
+1. Cierra otras aplicaciones
+2. Ejecuta el script de nuevo y selecciona TinyLlama (opción 2)
+3. Si persiste, puede que tu sistema tenga menos de 6GB RAM disponible
+
 ### El script es muy lento
 
-Esto es normal. El script incluye un delay de 1 segundo entre peticiones para evitar rate limiting. Con 685 ejercicios, el proceso completo tomará aproximadamente 11-12 minutos.
+Esto es esperado con CPU. Tiempos aproximados por ejercicio:
+- **TinyLlama 1.1B**: ~10-20 segundos
+- **Qwen 1.5B**: ~15-30 segundos
+- **Phi-3 Mini**: ~30-60 segundos
 
-### Rate limiting / Too many requests
+Con 685 ejercicios, el proceso completo puede tomar **2-8 horas** dependiendo del modelo.
 
-El script ya incluye delays automáticos. Si aún así ocurre, puedes aumentar el delay editando la línea 453 en `enrich_exercises.py`:
+### Error: "torch not found"
 
-```python
-enricher.process_all_exercises(exercises, delay_seconds=2.0)  # Cambiar de 1.0 a 2.0
+**Solución para Windows**:
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-## Obtener API Keys
+**Solución para Linux/Mac**:
+```bash
+pip install torch
+```
 
-### Claude (Anthropic)
-1. Visita https://console.anthropic.com/
-2. Crea una cuenta o inicia sesión
-3. Ve a Settings → API Keys
-4. Crea una nueva API key
-5. Cópiala y guárdala en `.env`
+### El modelo genera respuestas incorrectas o incompletas
 
-### OpenAI
-1. Visita https://platform.openai.com/
-2. Crea una cuenta o inicia sesión
-3. Ve a API Keys
-4. Crea una nueva API key
-5. Cópiala y guárdala en `.env`
+Los modelos pequeños pueden tener limitaciones en calidad. **Soluciones**:
+
+1. Usa el modelo **Qwen 1.5B** (mejor balance)
+2. Si tienes 16GB RAM, prueba **Phi-3 Mini** (mejor calidad)
+3. Revisa manualmente los resultados en `output/enriched_exercises.json`
 
 ## Características Avanzadas
 
-### Cambiar el Modelo de IA
+### Añadir Nuevos Modelos
 
-Puedes cambiar los modelos editando `enrich_exercises.py`:
+Puedes añadir más modelos editando el diccionario `AVAILABLE_MODELS` en `enrich_exercises.py` (líneas 42-61).
 
-**Claude**:
-```python
-self.model = "claude-3-5-sonnet-20241022"  # Línea 54
-```
+Modelos compatibles de Hugging Face:
+- Cualquier modelo con formato "conversacional" (chat/instruct)
+- Modelos pequeños optimizados para CPU (< 7B parámetros)
 
-**OpenAI**:
-```python
-self.model = "gpt-4o"  # Línea 83
-# Alternativas: "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"
-```
+### Procesar Solo Algunos Ejercicios (para pruebas)
 
-### Procesar Solo Algunos Ejercicios
-
-Para probar con un subconjunto de ejercicios, modifica la línea 446 en `main()`:
+Para probar con un subconjunto de ejercicios, modifica la línea 549 en `main()`:
 
 ```python
 exercises = load_exercises(INPUT_FILE)[:10]  # Solo los primeros 10
+```
+
+### Ajustar Parámetros de Generación
+
+En la clase `LocalLLMProvider.generate_response()` (líneas 140-148) puedes ajustar:
+
+```python
+max_new_tokens=1200,    # Máximo de tokens a generar
+temperature=0.5,        # Creatividad (0.0-1.0, menor = más conservador)
+top_p=0.9,             # Nucleus sampling (0.0-1.0)
 ```
 
 ## Licencia
